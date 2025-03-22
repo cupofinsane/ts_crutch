@@ -2,3 +2,5 @@
 *~
 .cache/
 compile_commands.json
+.clang-format
+ts_crutch
