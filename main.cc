@@ -6,11 +6,14 @@
 #include <X11/Xutil.h>
 
 #include <cstring>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <iostream>
 #include <linux/input.h>
+#include <string>
 #include <unistd.h>
+#include <unordered_set>
 
 #include <time.h>
 
@@ -47,6 +50,48 @@ Window GetTypeStatsWindow(Display *dpy, Window root)
     return 0;
 }
 
+std::unordered_set<std::string> GetAllKeyboards()
+{
+    std::unordered_set<std::string> result;
+    const int BUFSIZE = 1024;
+    char fullNameBuf[BUFSIZE] = "/dev/input/by-path/";
+    int fullNameBufLen = std::strlen(fullNameBuf);
+
+    DIR *dir = opendir(fullNameBuf);
+    if (dir == NULL)
+    {
+        std::cout << "Could not open /dev/input/by-path" << std::endl;
+        return result;
+    }
+
+    dirent *entry;
+    char symLinkName[BUFSIZE];
+    while ((entry = readdir(dir)) != NULL)
+    {
+        const char *fileName = entry->d_name;
+
+        if (std::strncmp(fileName + std::strlen(fileName) - 3, "kbd", 3) == 0)
+        {
+            fullNameBuf[fullNameBufLen] = 0;
+            strcat(fullNameBuf, fileName);
+
+            int n = readlink(fullNameBuf, symLinkName, BUFSIZE);
+            if (n == -1)
+            {
+                std::cout << "Couldn't read symlink for keyboard " << fullNameBuf << ". " << strerror(errno) << std::endl;
+                continue;
+            }
+            symLinkName[n] = 0;
+            fullNameBuf[fullNameBufLen] = 0;
+            strcat(fullNameBuf, symLinkName);
+            result.insert(fullNameBuf);
+        }
+    }
+    if (result.empty())
+        std::cout << "No keyboards found" << std::endl;
+    return result;
+}
+
 int main()
 {
     Display *dpy = XOpenDisplay(0);
@@ -73,8 +118,14 @@ int main()
     created_event.xkey.subwindow = 0;
 
     // const char *dev = "/dev/input/by-id/usb-SONiX_USB_DEVICE-event-kbd";
-    const char *dev = "/dev/input/by-path/pci-0000:00:14.0-usbv2-0:2:1.0-event-kbd";
-    // const char *dev = "/dev/input/event3";
+    // const char *dev = "/dev/input/by-path/pci-0000:00:14.0-usbv2-0:2:1.0-event-kbd";
+
+    auto f = GetAllKeyboards();
+    for (auto r : f)
+    {
+        std::cout << r << std::endl;
+    }
+    const char *dev = "/dev/input/event3";
     struct input_event ev;
     ssize_t n;
     int fd;
