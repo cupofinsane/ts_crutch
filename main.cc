@@ -15,9 +15,71 @@
 #include <unistd.h>
 #include <unordered_set>
 
+#include <poll.h>
 #include <time.h>
 
 static const char *const evval[3] = {"RELEASED", "PRESSED ", "REPEATED"};
+
+enum ReadResult
+{
+    NOTHING,
+    OK,
+    RECOVERABLE_ERROR,
+    ERROR
+};
+
+ReadResult ReadPolledResults(pollfd *fds, int N, input_event *ev)
+{
+    int recoverableError = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        if (fds[i].revents & POLLERR)
+        {
+            std::cout << "ReadPolledResults, error in revents\n";
+            return ReadResult::ERROR;
+        }
+        if (fds[i].revents & POLLIN)
+        {
+            ssize_t n = read(fds[i].fd, ev, sizeof *ev);
+            if (n == (ssize_t)-1)
+            {
+                if (errno == EINTR)
+                {
+                    std::cout << "EINTR\n"; // never happened. what is it for?
+                    recoverableError++;
+                    continue;
+                }
+                else
+                    return ReadResult::ERROR;
+            }
+            else if (n != sizeof *ev)
+            {
+                errno = EIO;
+                return ReadResult::ERROR;
+            }
+            fds[i].revents = 0;
+            return ReadResult::OK;
+        }
+    }
+    if (recoverableError)
+        return ReadResult::RECOVERABLE_ERROR;
+    return ReadResult::NOTHING;
+}
+
+ReadResult ReadKeyboardInput(pollfd *fds, int N, input_event *ev)
+{
+    ReadResult read_res = ReadPolledResults(fds, N, ev);
+    if (read_res != ReadResult::NOTHING)
+        return read_res;
+
+    auto res = poll(fds, N, -1);
+    if (res == -1)
+    {
+        std::cout << "ReadKeyboardInput, error in poll: " << strerror(errno) << std::endl;
+        return ReadResult::ERROR;
+    }
+    return ReadPolledResults(fds, N, ev);
+}
 
 Window GetTypeStatsWindow(Display *dpy, Window root)
 {
@@ -89,6 +151,7 @@ std::unordered_set<std::string> GetAllKeyboards()
     }
     if (result.empty())
         std::cout << "No keyboards found" << std::endl;
+    std::cout << "Found " << result.size() << " keyboard(s)" << std::endl;
     return result;
 }
 
@@ -113,48 +176,35 @@ int main()
 
     XEvent created_event;
     created_event.xkey.display = dpy;
+    
     created_event.xkey.window = 0;
     created_event.xkey.root = r;
     created_event.xkey.subwindow = 0;
 
-    // const char *dev = "/dev/input/by-id/usb-SONiX_USB_DEVICE-event-kbd";
-    // const char *dev = "/dev/input/by-path/pci-0000:00:14.0-usbv2-0:2:1.0-event-kbd";
-
-    auto f = GetAllKeyboards();
-    for (auto r : f)
+    auto kbds = GetAllKeyboards();
+    auto fds = new pollfd[kbds.size()];
+    int i = 0;
+    for (auto &kbd : kbds)
     {
-        std::cout << r << std::endl;
+        int fd = open(kbd.c_str(), O_RDONLY);
+        if (fd == -1)
+        {
+            std::cout << "Cannot open " << kbd << ": " << strerror(errno) << ".\n";
+            return EXIT_FAILURE;
+        }
+        fds[i].fd = fd;
+        fds[i].events = POLLIN;
+        ++i;
     }
-    const char *dev = "/dev/input/event3";
     struct input_event ev;
-    ssize_t n;
-    int fd;
-
-    fd = open(dev, O_RDONLY);
-    if (fd == -1)
-    {
-        std::cout << "Cannot open " << dev << ": " << strerror(errno) << ".\n";
-        return EXIT_FAILURE;
-    }
 
     for (;;)
     {
-        n = read(fd, &ev, sizeof ev);
-        if (n == (ssize_t)-1)
-        {
-            if (errno == EINTR)
-            {
-                std::cout << "EINTR\n"; // never happened. what is it for?
-                continue;
-            }
-            else
-                break;
-        }
-        else if (n != sizeof ev)
-        {
-            errno = EIO;
+        auto r = ReadKeyboardInput(fds, kbds.size(), &ev);
+        if (r == ReadResult::RECOVERABLE_ERROR)
+            continue;
+        if (r == ReadResult::ERROR)
             break;
-        }
 
         if (ev.type == EV_KEY && ev.value >= 0 && ev.value <= 2)
         {
@@ -180,6 +230,8 @@ int main()
             }
         }
     }
+
+    delete fds;
 
     return 0;
 }
