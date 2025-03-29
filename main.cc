@@ -1,3 +1,9 @@
+// This is a crutch to run Typing Statistics on Linux
+// Copyright © 2025 cupofinsane
+// This work is free. You can redistribute it and/or modify it under the
+// terms of the Do What The Fuck You Want To Public License, Version 2,
+// as published by Sam Hocevar. See the COPYING file for more details.
+
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xmd.h>
@@ -48,6 +54,8 @@ ReadResult ReadPolledResults(pollfd *fds, int N, input_event *ev)
                     std::cout << "EINTR\n"; // never happened. what is it for?
                     recoverableError++;
                     continue;
+
+
                 }
                 else
                     return ReadResult::ERROR;
